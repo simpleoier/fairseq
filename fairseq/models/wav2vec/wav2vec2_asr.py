@@ -343,6 +343,9 @@ class Wav2VecEncoder(FairseqEncoder):
             "mask": self.apply_mask and self.training,
         }
 
+        if 'finetune_last_n_layers' in kwargs:
+            w2v_args['finetune_last_n_layers'] = kwargs['finetune_last_n_layers']
+
         ft = self.freeze_finetune_updates <= self.num_updates
 
         with torch.no_grad() if not ft else contextlib.ExitStack():

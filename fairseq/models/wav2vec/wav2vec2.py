@@ -443,7 +443,7 @@ class Wav2Vec2Model(BaseFairseqModel):
 
         return logits
 
-    def forward(self, source, padding_mask=None, mask=True, features_only=False):
+    def forward(self, source, padding_mask=None, mask=True, features_only=False, finetune_last_n_layers=0):
 
         if self.feature_grad_mult > 0:
             features = self.feature_extractor(source)
@@ -499,7 +499,7 @@ class Wav2Vec2Model(BaseFairseqModel):
             y = unmasked_features
             mask_indices = None
 
-        x = self.encoder(x, padding_mask=padding_mask)
+        x = self.encoder(x, padding_mask=padding_mask, finetune_last_n_layers=finetune_last_n_layers)
 
         if features_only:
             return {"x": x, "padding_mask": padding_mask}
@@ -726,15 +726,15 @@ class TransformerEncoder(nn.Module):
 
         self.apply(init_bert_params)
 
-    def forward(self, x, padding_mask=None):
-        x = self.extract_features(x, padding_mask)
+    def forward(self, x, padding_mask=None, finetune_last_n_layers=0):
+        x = self.extract_features(x, padding_mask, finetune_last_n_layers=finetune_last_n_layers)
 
         if self.layer_norm_first:
             x = self.layer_norm(x)
 
         return x
 
-    def extract_features(self, x, padding_mask=None):
+    def extract_features(self, x, padding_mask=None, finetune_last_n_layers=0):
 
         if padding_mask is not None:
             x[padding_mask] = 0
@@ -752,11 +752,24 @@ class TransformerEncoder(nn.Module):
         x = x.transpose(0, 1)
 
         layer_results = []
-        for i, layer in enumerate(self.layers):
-            dropout_probability = np.random.random()
-            if not self.training or (dropout_probability > self.layerdrop):
-                x, z = layer(x, self_attn_padding_mask=padding_mask, need_weights=False)
-                layer_results.append(x)
+        if finetune_last_n_layers == 0:
+            for i, layer in enumerate(self.layers):
+                dropout_probability = np.random.random()
+                if not self.training or (dropout_probability > self.layerdrop):
+                    x, z = layer(x, self_attn_padding_mask=padding_mask, need_weights=False)
+                    layer_results.append(x)
+        else:
+            with torch.no_grad():
+                for i, layer in enumerate(self.layers[:-finetune_last_n_layers]):
+                    dropout_probability = np.random.random()
+                    if not self.training or (dropout_probability > self.layerdrop):
+                        x, z = layer(x, self_attn_padding_mask=padding_mask, need_weights=False)
+                        layer_results.append(x)
+            for i, layer in enumerate(self.layers[-finetune_last_n_layers:]):
+                dropout_probability = np.random.random()
+                if not self.training or (dropout_probability > self.layerdrop):
+                    x, z = layer(x, self_attn_padding_mask=padding_mask, need_weights=False)
+                    layer_results.append(x)
 
         # T x B x C -> B x T x C
         x = x.transpose(0, 1)
